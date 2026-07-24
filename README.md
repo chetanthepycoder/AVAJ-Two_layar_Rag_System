@@ -1,461 +1,287 @@
-# AVAJ — AI Assistant for National PG College
+﻿# Enterprise Local RAG (AVAJ)
 
-**AVAJ** (Advanced Voice Assistance Junction) is a local-first, production-grade RAG (Retrieval-Augmented Generation) system built specifically for **National Post Graduate College, Lucknow**. It answers student and faculty queries in natural **Hinglish** (Hindi + English in Roman script), sourcing every answer strictly from the college's official documents — never hallucinating facts.
+A local-first Retrieval-Augmented Generation system with ingestion, hybrid retrieval, reranking, provider fallback, Streamlit UI, Rich CLI, and an AI Work Log for debugging every query.
 
-> Built by **Abhishek** · SDE Intern · Vastu House Finance Company · BCA, University of Lucknow
+![GitHub](https://img.shields.io/github/license/chetanprojects/AVAJ-Two-Layer_Rag-System)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit)
+![Ollama](https://img.shields.io/badge/Ollama-FF5A00?logo=ollama)
+![Groq](https://img.shields.io/badge/Groq-%23FFFFFF.svg?logo=grogo&logoColor=black)
 
----
+## Features
 
-## What is AVAJ?
+- **Local-first**: Designed to run entirely on local infrastructure with optional cloud fallback.
+- **Two-layer RAG architecture**:
+  - Layer 1: Query understanding and optimization using Ollama (local LLM).
+  - Layer 2: Evidence-based answer generation with fallback to Groq (fast cloud LLM) for final synthesis.
+- **Hybrid retrieval**: Combines dense and sparse search for robust retrieval.
+- **Reranking**: Uses a cross-encoder to improve relevance of retrieved chunks.
+- **Provider fallback**: Automatically falls back to alternative providers if the primary fails.
+- **Observability**: Detailed AI Work Log for every query, showing query expansion, retrieval, reranking, and reasoning.
+- **Multiple interfaces**:
+  - Command-line interface (CLI) with Rich for interactive use.
+  - Web interface built with Streamlit.
+  - Python API for programmatic use.
+- **Flexible configuration**: Environment variables for easy customization.
+- **Multilingual support**: Uses BAAI/bge-m3 embedding model for English, Hindi, and Hinglish.
+- **Document ingestion**: Supports various file formats for building your knowledge base.
 
-AVAJ is a domain-locked AI assistant. Ask it anything about NPGC — admissions, courses, faculty, fees, exam schedules, departments, scholarships, rules — and it pulls the answer from indexed college documents, structures it through a three-layer AI pipeline, and responds in the natural Hinglish tone of an intelligent robotic assistant.
+## Architecture
 
-It works **offline by default**. Cloud providers (Groq) and local LLMs (Ollama) are optional accelerators — the system degrades gracefully when neither is available.
+AVAJ implements a three-layer answer flow to ensure accurate, grounded, and context-aware responses:
 
----
+1. **Layer 1 (Query Understanding)**:
+   - Uses Ollama (local LLM) to rewrite, optimize, and classify the user query.
+   - Determines if the query is related to the knowledge domain (e.g., National PG College).
+   - Extracts search hints and generates an optimized query for retrieval.
 
-## How It Works
+2. **Layer 2 (Retrieval and Reranking)**:
+   - Expands the query using synonyms and related terms.
+   - Performs hybrid search (dense + sparse) over the ingested documents.
+   - Reranks the results using a cross-encoder model to prioritize the most relevant chunks.
+   - Retrieves parent chunks for context preservation.
 
-AVAJ processes every query through a strict **3-layer pipeline**:
+3. **Layer 3 (Answer Generation)**:
+   - Uses Ollama to gather grounded facts from the retrieved context.
+   - Uses Groq (or Ollama fallback) to generate the final answer, incorporating the original query, Layer 1 metadata, and Layer 2 structured context.
+   - Each layer has deterministic fallbacks to ensure the system works offline or with limited resources.
 
-```
-User Query
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│  LAYER 1 — Query Intelligence  (Ollama / fallback)  │
-│  • Classifies whether query is NPGC-related         │
-│  • Rewrites the query for better retrieval          │
-│  • Identifies intent, domain, language, format      │
-│  • Produces search hints for boosting               │
-└──────────────────────────┬──────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────┐
-│  HYBRID SEARCH  (BM25 sparse + ChromaDB dense)      │
-│  • BM25 keyword search on child chunks              │
-│  • BGE-M3 multilingual semantic vector search       │
-│  • RRF (Reciprocal Rank Fusion) merges both lanes   │
-│  • Search-hint boosting on high-priority terms      │
-└──────────────────────────┬──────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────┐
-│  RERANKER  (CrossEncoder / token-overlap fallback)  │
-│  • Scores every candidate against the query         │
-│  • Adaptive floor cutoff filters weak results       │
-│  • Expands to parent chunks for full context        │
-└──────────────────────────┬──────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────┐
-│  LAYER 2 — Evidence Collection  (Ollama / fallback) │
-│  • Reads only grounded context passages             │
-│  • Reports coverage: full / partial / none          │
-│  • Structures evidence into clean human context     │
-└──────────────────────────┬──────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────┐
-│  LAYER 3 — Final Answer Generation  (Groq stream)   │
-│  • Streams the answer in natural Hinglish           │
-│  • Cites source labels from evidence                │
-│  • Falls back to Ollama → offline text if Groq down │
-└──────────────────────────┬──────────────────────────┘
-                           │
-                           ▼
-                     Final Answer
-```
+![AVAJ Architecture](https://via.placeholder.com/800x400?text=AVAJ+Three-Layer+Rag+Architecture)
 
-### Document Ingestion
-
-When you ingest a document, AVAJ:
-1. Detects the file type (`.txt`, `.md`, `.html`, `.json`, `.jsonl`, `.pdf`)
-2. Extracts clean text — including HTML table → Markdown conversion and PDF page extraction
-3. Splits the text into **parent chunks** (~1400 tokens) and **child chunks** (~280 tokens with 50-token overlap)
-4. SHA-256 hashes each document to skip duplicates automatically
-5. Stores parents, children, and an index ledger as JSON on disk
-6. Builds a ChromaDB vector collection for semantic search (if enabled)
-
-### Supported File Types
-
-| Format | Notes |
-|--------|-------|
-| `.pdf` | pdfplumber (with table extraction) → pypdf fallback |
-| `.html` / `.htm` | BeautifulSoup, strips nav/ads, renders tables as Markdown |
-| `.json` / `.jsonl` | Parsed and pretty-printed |
-| `.md` / `.txt` | Plain text |
-
----
-
-## Project Structure
-
-```
-AVAJ-main/
-├── main.py                  # CLI entry point (ingest / ask / web / cli)
-├── rag_engine.py            # Core 3-layer RAG orchestrator
-├── requirements.txt
-├── .env                     # All environment variables
-│
-├── config/
-│   └── settings.py          # Pydantic settings, env var binding
-│
-├── ingestion/
-│   ├── loaders.py           # File parsers (PDF, HTML, JSON, MD, TXT)
-│   ├── pipeline.py          # Chunking, SHA dedup, JSON store
-│   └── models.py            # DocumentRecord, ParentChunk, ChildChunk
-│
-├── retrieval/
-│   ├── hybrid_search.py     # BM25 + ChromaDB dense + RRF fusion
-│   ├── reranker.py          # CrossEncoder reranker (token-overlap fallback)
-│   └── query_engine.py      # Query expansion service
-│
-├── providers/
-│   ├── groq.py              # Groq streaming (Layer 3, AVAJ system prompt)
-│   └── ollama.py            # Ollama (Layer 1 prompt-engineer, Layer 2 collect)
-│
-├── observability/
-│   └── telemetry.py         # AIWorkLog, StageTimer (per-query debug log)
-│
-├── ui/
-│   ├── app.py               # Streamlit web UI (chat + document manager)
-│   └── cli.py               # Rich terminal dashboard
-│
-├── data/
-│   ├── parents.json         # Indexed parent chunks
-│   ├── children.json        # Indexed child chunks
-│   ├── index_ledger.json    # Document SHA registry
-│   └── uploads/             # Uploaded source documents
-│
-└── collection/              # Raw NPGC source files (PDFs, HTMLs, JSONs)
-```
-
----
-
-## Setup — Complete Guide
+## Installation
 
 ### Prerequisites
 
-| Requirement | Version |
-|-------------|---------|
-| Python | 3.10 or 3.12 recommended |
-| pip | Latest |
-| (Optional) Ollama | For local LLM layers 1 & 2 |
-| (Optional) Groq account | For cloud-streamed Layer 3 answers |
-
----
-
-### Step 1 — Clone the Repository
-
-```bash
-git clone https://github.com/YOUR_USERNAME/AVAJ.git
-cd AVAJ
-```
-
----
-
-### Step 2 — Create a Virtual Environment
-
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-**Linux / macOS:**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
----
-
-### Step 3 — Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-This installs:
-
-| Package | Purpose |
-|---------|---------|
-| `streamlit` | Web UI |
-| `rich` | Terminal dashboard |
-| `chromadb` | Vector store for semantic search |
-| `sentence-transformers` | BGE-M3 embeddings + CrossEncoder reranker |
-| `rank-bm25` | Keyword (sparse) search |
-| `pdfplumber`, `pypdf` | PDF text and table extraction |
-| `beautifulsoup4` | HTML parsing and table extraction |
-| `groq` | Groq cloud LLM client |
-| `ollama` | Ollama local LLM client |
-| `pydantic`, `python-dotenv` | Config and env management |
-
----
-
-### Step 4 — Configure Environment Variables
-
-Copy the sample and fill in your keys:
-
-```bash
-cp .env .env.local
-```
-
-Or edit `.env` directly:
-
-```env
-# ── Provider Keys ──────────────────────────────────────────────────────────────
-# Leave blank to run fully offline with BM25 + fallback generation
-GROQ_API_KEY=your_groq_api_key_here
-HF_TOKEN=your_huggingface_token_here        # Only needed for gated HF models
-
-# ── Ollama (Local LLM) ─────────────────────────────────────────────────────────
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=qwen2.5:3b                     # Layer 2 model (evidence collection)
-OLLAMA_LAYER1_MODEL=gemma2:2b               # Layer 1 model (query intelligence)
-
-# ── Groq (Cloud LLM) ───────────────────────────────────────────────────────────
-GROQ_MODEL=llama-3.3-70b-versatile
-
-# ── Storage ────────────────────────────────────────────────────────────────────
-RAG_DATA_DIR=data
-RAG_UPLOAD_DIR=data/uploads
-
-# ── Retrieval Tuning ───────────────────────────────────────────────────────────
-RAG_TOP_K=8                                 # Candidates to retrieve before rerank
-RAG_HYBRID_ALPHA=0.5                        # 0 = BM25 only, 1 = dense only
-RAG_SEARCH_HINT_BOOST=1.5                   # Weight boost for Layer 1 search hints
-RAG_RERANK_CUTOFF=-2.0                      # Min rerank score to pass
-RAG_PARENT_CHUNK_TOKENS=1400
-RAG_CHILD_CHUNK_TOKENS=280
-RAG_CHILD_OVERLAP_TOKENS=50
-RAG_MAX_CONTEXT_PARENT_CHUNKS=6
-RAG_MAX_CONTEXT_CHARACTERS=9000
-
-# ── Timeouts ───────────────────────────────────────────────────────────────────
-LAYER1_TIMEOUT_SECONDS=120
-LAYER2_TIMEOUT_SECONDS=120
-RAG_TIMEOUT_SECONDS=120
-
-# ── Embedding & Reranking ──────────────────────────────────────────────────────
-# Set RAG_ENABLE_CHROMA=true after the BGE-M3 model has been downloaded
-RAG_ENABLE_CHROMA=true
-RAG_ENABLE_RERANKER=false                   # Set true after CrossEncoder is cached
-EMBEDDING_MODEL=BAAI/bge-m3                 # Free multilingual model (EN/HI/Hinglish)
-EMBEDDING_BATCH_SIZE=16
-RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-12-v2
-```
-
-**Get a free Groq API key at:** https://console.groq.com
-
----
-
-### Step 5 — (Optional) Set Up Ollama for Local LLMs
-
-Install Ollama from https://ollama.com, then pull the models used by AVAJ:
-
-```bash
-ollama pull qwen2.5:3b       # Layer 2 — evidence collection
-ollama pull gemma2:2b        # Layer 1 — query intelligence
-```
-
-Verify Ollama is running:
-```bash
-ollama list
-```
-
-> **Note:** AVAJ works without Ollama. When Ollama is unavailable, both Layer 1 and Layer 2 fall back to deterministic heuristics so the pipeline never crashes.
-
----
-
-### Step 6 — Index Your Documents
-
-Ingest any NPGC document (PDF, HTML, JSON, Markdown, TXT):
-
-```bash
-# Single file
-python main.py ingest collection/College_brocher.pdf
-
-# Force re-index an already indexed file
-python main.py ingest collection/UG-BCA_NEP.pdf --force
-```
-
-The first ingest with `RAG_ENABLE_CHROMA=true` will download the `BAAI/bge-m3` model (~570 MB). This only happens once; the model is cached locally by SentenceTransformers.
-
----
-
-### Step 7 — Run AVAJ
-
-**Option A — Streamlit Web UI (recommended)**
-```bash
-python main.py web
-```
-Opens at `http://localhost:8501`. Features:
-- Chat interface with streaming responses
-- Document upload and management panel
-- Live AI Work Log with retrieval stats, rerank ledger, and latency breakdown
-- Sidebar sliders for Top-K, hybrid alpha, and rerank cutoff
-
-**Option B — Rich Terminal Dashboard**
-```bash
-python main.py
-```
-Interactive terminal with commands:
-```
-/ingest <path>     Index a document
-/docs              List all indexed documents
-/ask <question>    Ask a question
-/quit              Exit
-```
-
-**Option C — Single Question (non-interactive)**
-```bash
-python main.py ask "BCA ke liye admission process kya hai?"
-```
-
----
-
-### Step 8 — Verify the Setup
-
-```bash
-# Check what's indexed
-python main.py ask "NPGC mein kaunse courses available hain?"
-```
-
-You should see a Hinglish response based on your indexed documents.
-
----
-
-## Offline / Minimal Mode
-
-AVAJ is designed to work without any API keys or Ollama:
-
-| What's missing | What happens |
-|----------------|--------------|
-| No Groq key | Layer 3 falls back to Ollama streaming |
-| No Ollama | Layers 1 & 2 use deterministic fallbacks; Layer 3 returns best indexed evidence as text |
-| No ChromaDB / Chroma disabled | Semantic search uses Jaccard token overlap (no model download needed) |
-| No reranker | Token-overlap scoring replaces CrossEncoder |
-
-Set for instant offline start:
-```env
-RAG_ENABLE_CHROMA=false
-RAG_ENABLE_RERANKER=false
-```
-
----
-
-## Key Features & Benefits
-
-### 🔒 Domain-Locked — Zero Hallucination Risk
-AVAJ refuses all queries unrelated to NPGC at the Layer 1 classification stage. It never fabricates information — if the answer is not in the indexed documents, it says so clearly.
-
-### 🌐 Multilingual by Default
-The default embedding model `BAAI/bge-m3` supports English, Hindi, and Hinglish natively. Queries and documents can freely mix scripts and languages.
-
-### ⚡ Hybrid Search
-Combines BM25 keyword search (exact term matching) with BGE-M3 semantic vector search (meaning-based matching), fused via Reciprocal Rank Fusion. Neither approach alone is as reliable as both together.
-
-### 🧠 3-Layer AI Pipeline
-Each layer has a deterministic fallback. The system is guaranteed to return an answer regardless of provider availability — from high-quality Groq streams down to offline indexed excerpts.
-
-### 📊 Full Observability
-Every query produces an `AIWorkLog` containing: expanded queries, retrieval stats (dense hits, sparse hits, fused candidates), rerank ledger with per-chunk scores, evidence audit, selected parent chunks, and per-stage latency in milliseconds. Visible in the Streamlit AI Work Log panel.
-
-### 🗂️ Parent-Child Chunking
-Documents are split into large parent chunks (for context) and small child chunks (for precise retrieval). Retrieval finds the most relevant child chunks, then expands back to parent chunks for richer context — balancing precision and completeness.
-
-### 🔄 Automatic Deduplication
-SHA-256 hashing prevents the same document from being indexed twice. Re-ingesting with `--force` cleanly replaces the old entry.
-
-### 📁 Multiple Ingest Formats
-PDFs with embedded tables, HTML college pages, JSON/JSONL data exports, Markdown notes, and plain text are all ingested through a unified pipeline.
-
-### 🖥️ Two Interfaces
-The Streamlit web UI is suitable for demos and daily use. The Rich terminal dashboard is suited for development and server environments with no GUI.
-
-### 💾 No Database Required
-All data (chunks, vectors, ledger) is stored as JSON files and a local ChromaDB directory. No PostgreSQL, Redis, or external services needed.
-
----
-
-## Configuration Reference
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GROQ_API_KEY` | — | Groq API key for Layer 3 generation |
-| `HF_TOKEN` | — | HuggingFace token (only for gated models) |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server address |
-| `OLLAMA_MODEL` | `llama3` | Model for Layer 2 (evidence collection) |
-| `OLLAMA_LAYER1_MODEL` | same as `OLLAMA_MODEL` | Model for Layer 1 (query intelligence) |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model for Layer 3 |
-| `EMBEDDING_MODEL` | `BAAI/bge-m3` | SentenceTransformer model for dense search |
-| `EMBEDDING_BATCH_SIZE` | `16` | Batch size for embedding generation |
-| `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-12-v2` | CrossEncoder reranker model |
-| `RAG_ENABLE_CHROMA` | `false` | Enable ChromaDB semantic search |
-| `RAG_ENABLE_RERANKER` | `false` | Enable CrossEncoder reranker |
-| `RAG_TOP_K` | `8` | Candidates retrieved before reranking |
-| `RAG_HYBRID_ALPHA` | `0.5` | Dense/sparse weight balance (0=BM25, 1=dense) |
-| `RAG_SEARCH_HINT_BOOST` | `1.5` | Weight multiplier for Layer 1 search hints |
-| `RAG_RERANK_CUTOFF` | `-2.0` | Minimum rerank score to pass through |
-| `RAG_PARENT_CHUNK_TOKENS` | `1400` | Token size of parent (context) chunks |
-| `RAG_CHILD_CHUNK_TOKENS` | `280` | Token size of child (retrieval) chunks |
-| `RAG_CHILD_OVERLAP_TOKENS` | `50` | Overlap between consecutive child chunks |
-| `RAG_MAX_CONTEXT_PARENT_CHUNKS` | `6` | Max parent chunks sent to Layer 2 |
-| `RAG_MAX_CONTEXT_CHARACTERS` | `9000` | Max characters of context per query |
-| `LAYER1_TIMEOUT_SECONDS` | `15` | Timeout for Layer 1 Ollama call |
-| `LAYER2_TIMEOUT_SECONDS` | `30` | Timeout for Layer 2 Ollama call |
-| `RAG_DATA_DIR` | `data` | Directory for JSON stores and ChromaDB |
-| `RAG_UPLOAD_DIR` | `data/uploads` | Directory for uploaded documents |
-
----
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Language | Python 3.10 / 3.12 |
-| Web UI | Streamlit |
-| Terminal UI | Rich |
-| Vector Store | ChromaDB |
-| Embeddings | BAAI/bge-m3 (SentenceTransformers) |
-| Keyword Search | BM25Okapi (rank-bm25) |
-| Reranker | CrossEncoder ms-marco-MiniLM-L-12-v2 |
-| Local LLM | Ollama (qwen2.5:3b, gemma2:2b) |
-| Cloud LLM | Groq (llama-3.3-70b-versatile) |
-| PDF Parsing | pdfplumber + pypdf |
-| HTML Parsing | BeautifulSoup4 |
-| Config | Pydantic v2 + python-dotenv |
-
----
+- Python 3.10 or higher
+- Git
+- [Ollama](https://ollama.com/) (for local LLM embeddings and generation)
+- [Groq](https://groq.com/) API key (optional, for faster inference)
+- (Optional) GPU for faster embeddings (CUDA-enabled)
+
+### Setup
+
+1. **Clone the repository**:
+   `ash
+   git clone https://github.com/chetanprojects/AVAJ-Two-Layer_Rag-System.git
+   cd AVAJ-Two-Layer_Rag-System
+   `
+
+2. **Create a virtual environment**:
+   `ash
+   python -m venv .venv
+   # On Windows
+   .\.venv\Scripts\Activate.ps1
+   # On Linux/macOS
+   source .venv/bin/activate
+   `
+
+3. **Install dependencies**:
+   `ash
+   pip install -r requirements.txt
+   `
+
+4. **Install Ollama** (if not already installed):
+   - Download and install from [https://ollama.com/](https://ollama.com/)
+   - Pull the required model (default is llama3):
+     `ash
+     ollama pull llama3
+     `
+
+5. **Set up environment variables** (optional but recommended):
+   Create a .env file in the project root with the following variables:
+   `	ext
+   GROQ_API_KEY=your_groq_api_key_here
+   HF_TOKEN=your_huggingface_token_here  # optional, for accessing gated models
+   OLLAMA_HOST=http://localhost:11434
+   OLLAMA_MODEL=llama3
+   OLLAMA_LAYER1_MODEL=llama3
+   GROQ_MODEL=llama-3.3-70b-versatile
+   LAYER1_TIMEOUT_SECONDS=15
+   LAYER2_TIMEOUT_SECONDS=30
+   RAG_DATA_DIR=data
+   RAG_ENABLE_CHROMA=false
+   RAG_ENABLE_RERANKER=false
+   RAG_SEARCH_HINT_BOOST=1.5
+   EMBEDDING_MODEL=BAAI/bge-m3
+   EMBEDDING_BATCH_SIZE=16
+   `
+   - Set RAG_ENABLE_CHROMA=true and RAG_ENABLE_RERANKER=true to use local embedding and cross-encoder models (requires additional dependencies and model downloads).
+   - Get a Groq API key from [https://console.groq.com/](https://console.groq.com/) for faster LLM inference.
+
+6. **Ingest your documents**:
+   `ash
+   python main.py ingest path/to/your/document.pdf
+   `
+   Supported formats: PDF, DOCX, TXT, MD, and more (via Unstructured.io).
+
+## Usage
+
+### Command Line Interface (CLI)
+
+Start the interactive CLI dashboard:
+   `ash
+   python main.py cli
+   `
+
+Commands:
+   - /ingest <path>: Ingest a document or directory.
+   - /docs: List all indexed documents.
+   - /ask <question>: Ask a question to the RAG system.
+   - /help: Show help.
+   - /quit or /exit: Exit the CLI.
+
+Example:
+   `ash
+   python main.py ingest sample_docs/faculty.md
+   python main.py ask "Who is in the Computing department?"
+   `
+
+### Web Interface (Streamlit)
+
+Launch the Streamlit web app:
+   `ash
+   python main.py web
+   `
+   Then open your browser to http://localhost:8501.
+
+The web interface provides:
+   - A chat interface for asking questions.
+   - File upload for ingesting new documents.
+   - An "AI Work Log" expander to inspect the internal reasoning steps for each answer.
+
+### Python API
+
+You can also use AVAJ as a library in your Python code:
+   `python
+   from rag_engine import RAGEngine
+   from config import get_settings
+
+   settings = get_settings()
+   engine = RAGEngine(settings)
+
+   for event in engine.ask("Your question here"):
+       if event["type"] == "token":
+           print(event["token"], end="", flush=True)
+       elif event["type"] == "log":
+           # Process the work log for debugging
+           pass
+   `
+
+## How It Works
+
+### Three-Layer Answer Flow
+
+When you ask a question, AVAJ processes it through three distinct layers:
+
+1. **Layer 1: Query Understanding**
+   - The query is sent to Ollama (or a fallback provider) to:
+     - Rewrite the query for clarity.
+     - Classify the query domain (e.g., is it about the college?).
+     - Extract search hints (keywords to boost in retrieval).
+     - Determine the expected answer format (e.g., list, direct answer, summary).
+
+2. **Layer 2: Retrieval and Evidence Collection**
+   - The query is expanded with synonyms and related terms.
+   - Hybrid search (combining vector similarity and keyword matching) retrieves candidate chunks.
+   - A cross-encoder reranker scores the chunks for relevance.
+   - The top chunks are passed to Layer 2 of the LLM to extract only grounded facts, reducing hallucination.
+
+3. **Layer 3: Answer Generation**
+   - The original query, Layer 1 metadata (intent, domain, format), and Layer 2 structured context are sent to Groq (or Ollama) to generate the final answer.
+   - The answer is streamed back token-by-token for a responsive user experience.
+
+### Fallback Mechanisms
+
+- If Ollama is unavailable, Layer 1 and Layer 2 can fall back to Groq (if configured).
+- If Groq is unavailable, the system can fall back to Ollama for the final answer.
+- If both are unavailable, the system will use a rule-based response for Layer 1 classification and a simple template for Layer 3.
+
+### Observability
+
+Every interaction is logged in the AI Work Log, which includes:
+   - Query expansion terms.
+   - Retrieval statistics (dense/sparse scores, hybrid fusion).
+   - Reranking ledger with scores and pass/fail status (passed/failed) for each candidate.
+   - Reasoning summary from Layer 1.
+   - Performance metrics for each stage.
+
+This transparency allows users to debug and trust the system's outputs.
+
+## Benefits
+
+- **Privacy-first**: All data remains on your local machine unless you explicitly use external providers like Groq.
+- **Cost-effective**: Uses free local models (Ollama) with optional paid API for speed.
+- **Accurate**: The two-layer approach reduces hallucinations by grounding answers in retrieved evidence.
+- **Flexible**: Swap between local and cloud providers based on availability and cost.
+- **Transparent**: Full visibility into the AI's reasoning process via the Work Log.
+- **Easy to use**: Simple CLI and intuitive web interface.
+- **Scalable**: Designed to handle large document collections with efficient indexing and retrieval.
+
+## Configuration
+
+All configuration is done via environment variables or a .env file. Here's a breakdown:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| GROQ_API_KEY | API key for Groq (optional) | None |
+| HF_TOKEN | Hugging Face token for gated models (optional) | None |
+| OLLAMA_HOST | Host URL for Ollama | http://localhost:11434 |
+| OLLAMA_MODEL | Model used for Ollama (general) | llama3 |
+| OLLAMA_LAYER1_MODEL | Model used for Layer 1 (query understanding) | llama3 |
+| GROQ_MODEL | Model used for Groq (final answer) | llama-3.3-70b-versatile |
+| LAYER1_TIMEOUT_SECONDS | Timeout for Layer 1 Ollama calls | 15 |
+| LAYER2_TIMEOUT_SECONDS | Timeout for Layer 2 Ollama calls | 30 |
+| RAG_DATA_DIR | Directory for storing indexed data | data |
+| RAG_UPLOAD_DIR | Directory for uploaded files (web UI) | data/uploads |
+| RAG_ENABLE_CHROMA | Enable local Chroma vector store (requires chromadb and sentence-transformers) | alse |
+| RAG_ENABLE_RERANKER | Enable local cross-encoder reranker (requires sentence-transformers and a reranker model) | alse |
+| RAG_SEARCH_HINT_BOOST | Boost factor for search hints from Layer 1 | 1.5 |
+| EMBEDDING_MODEL | SentenceTransformer model for embeddings | BAAI/bge-m3 |
+| EMBEDDING_BATCH_SIZE | Batch size for embedding generation | 16 |
+
+### Enabling Local Embeddings and Reranker
+
+To use local embeddings and reranking (fully offline capable):
+
+1. Install additional dependencies:
+   `ash
+   pip install chromadb sentence-transformers torch
+   `
+2. Set in .env:
+   `	ext
+   RAG_ENABLE_CHROMA=true
+   RAG_ENABLE_RERANKER=true
+   `
+3. The system will automatically download the BAAI/bge-m3 embedding model and a cross-encoder model (default: cross-encoder/ms-marco-MiniLM-L-6-v2) on first run.
 
 ## Troubleshooting
 
-**`RAG_ENABLE_CHROMA=true` but no semantic search happening**
-→ The BGE-M3 model needs to download on first run. This takes a few minutes and requires internet access. After it's cached, subsequent starts are instant.
+- **Ollama not running**: Ensure Ollama is installed and the service is running. Run ollama serve in a separate terminal.
+- **Groq API errors**: Check your GROQ_API_KEY and internet connection.
+- **Slow first response**: The first run may take longer as models are downloaded and embedded.
+- **No documents found**: Ensure you have ingested documents with python main.py ingest <path>.
+- **CUDA errors**: If you don't have a GPU, the system will fall back to CPU. Ensure PyTorch is installed without CUDA if needed.
 
-**Ollama not connecting**
-→ Run `ollama serve` in a separate terminal. Confirm with `curl http://localhost:11434/api/tags`.
+## Contributing
 
-**Groq generation failing**
-→ Check your `GROQ_API_KEY` in `.env`. AVAJ will automatically fall back to Ollama or offline mode.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-**PDF not extracting tables**
-→ Ensure `pdfplumber` is installed (`pip install pdfplumber`). Some scanned PDFs have no text layer — only digitally-created PDFs extract cleanly.
-
-**Old vectors after changing `EMBEDDING_MODEL`**
-→ AVAJ uses a model-specific ChromaDB collection name derived from the model's SHA. Changing the model automatically creates a new collection and re-embeds all documents. No manual cleanup needed.
-
----
+1. Fork the repository.
+2. Create a feature branch.
+3. Commit your changes.
+4. Push to the branch.
+5. Open a Pull Request.
 
 ## License
 
-This project was developed as part of an internship at **Vastu House Finance Company** and serves **National Post Graduate College, Lucknow**.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
----
+## Acknowledgements
 
-## Author
-
-**Abhishek**
-BCA Student — National Post Graduate College, University of Lucknow
-SDE Intern — Vastu House Finance Company
+- [Ollama](https://ollama.com/) for making local LLMs accessible.
+- [Groq](https://groq.com/) for fast inference.
+- [Streamlit](https://streamlit.io/) for the web UI framework.
+- [Rich](https://github.com/Textualize/rich) for beautiful CLI interfaces.
+- [SentenceTransformers](https://www.sbert.net/) for embedding models.
+- [Chroma](https://www.trychroma.com/) for vector storage.
+- [Unstructured](https://unstructured-io.github.io/unstructured/) for document ingestion.
