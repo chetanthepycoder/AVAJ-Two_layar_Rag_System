@@ -2,7 +2,8 @@
 
 A local-first Retrieval-Augmented Generation system with ingestion, hybrid retrieval, reranking, provider fallback, Streamlit UI, Rich CLI, and an AI Work Log for debugging every query.
 
-![GitHub](https://img.shields.io/github/license/chetanprojects/AVAJ-Two-Layer_Rag-System)
+![GitHub](https://img.shields.io/github/license/chetanthepycoder/AVAJ-Two_layar_Rag_System?style=for-the-badge&color=green
+)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit)
 ![Ollama](https://img.shields.io/badge/Ollama-FF5A00?logo=ollama)
